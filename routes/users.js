@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Joi = require('joi'); // Validation with joi
 const passport = require('passport');
+const randomString = require("randomstring");
 //Import user mogoose model
 const User = require('../models/usermodel');
+const mailer = require('../misc/mailer');
 
 //Validation userShcema
 
@@ -64,8 +66,15 @@ router.route('/register')
 
 	    // If email dose not exists and all is good hash password and save the use to db
 	    const hash = await User.hashPassword(result.value.password);
-	    
-	    //Save new user to the db
+
+	    //Before the save process generate token
+	    const secretToken = randomString.generate(); //Generates reandom string from randomstring package   
+	    result.value.secretToken = secretToken;
+
+	    //Flag the account as inactive untill activating secret token
+	    result.value.active = false;
+
+	   //Save new user to the db
 	   //First delete the confimation password to not get stored in db
 	   delete result.value.confirmationPassword;
 	   //Replace password that was written to the hashed one
@@ -74,8 +83,24 @@ router.route('/register')
 	   const newUser = await new User(result.value);
 	   await newUser.save();
 
+	   // Compose and email and send token
+	   const html = `Hi there,
+	   <br/>
+	   Thank you for registering to my site!!
+	   <br/><br/>
+	   Please verify your email by coping the following token:
+	   <br/>
+	   Token: <b>${secretToken}</b>
+	   <br/>
+	   On the following page: <a href="http://localhost:8080/user/verify">http:localhost:8080/users/verify</a>
+	   </br><br>
+	   Have a plesant day!`;
+
+	   //Send the email
+	   await mailer.sendEmail('admin@mysite.com', 'Please verify you email',  result.value.email, html);
+
 	   //Flash a success message
-	   req.flash('success', 'User created');
+	   req.flash('success', 'Please check your email for verification');
 	   res.redirect('/users/login');
 	} catch(error) {
 		next(error);
@@ -90,10 +115,10 @@ router.route('/login')
   .post(passport.authenticate('local', {
   	successRedirect: '/users/dashboard',
   	failureRedirect: '/users/login',
-  	faliureFlash: true
+  	failureFlash: true,
   }));
 
-//Checks in index for condition if req.user and sets a flash message
+//Cheks user object in request if existing
 router.route('/dashboard')	
 	.get(isAuthenticated, (req, res) => {
 		res.render('dashboard', {
@@ -101,7 +126,38 @@ router.route('/dashboard')
 		});
 	});
 
-//Checks in index for condition if req.user and sets a flash message
+
+router.route('/verify')
+	.get(isNotAuthenticated, (req, res, next)=> {
+		res.render('verify');
+	})
+
+	.post(async (req, res, next)=> {
+		try {
+			const secretToken = req.body.secretToken;
+
+			//Find the account and match the secret token
+			const user = await User.findOne({ 'secretToken': secretToken.trim() });
+
+			if (!user) {
+				req.flash('error', 'No user found');
+				res.redirect('/users/verify');
+				return;
+			}
+
+			user.active = true;
+			user.secretToken = '';
+			await user.save();
+
+			req.flash('success', 'Thank you now you may log in');
+			res.redirect('/user/login');
+			
+		} catch(error) {
+			next(error);
+		}
+	});
+
+//Cheks user object in request if existing
 router.route('/logout')	
 	.get(isAuthenticated, (req, res) => {
 		req.logout();

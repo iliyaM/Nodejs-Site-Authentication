@@ -25,17 +25,25 @@ passport.use('local', new localStrategy({
 	try {
 		// if email exists
 		const user = await User.findOne({'email': email});
+
 		if (!user) {
 			return done(null, false, {message: "unknown User"});
 		}
 
 		//check if the password is correct
 		const isValid = User.comparePasswords(password, user.password);
-		if (isValid) {
-			return done(null, user);
-		} else {
+
+		if (!isValid) {
 			return done(null, false, {message: 'Unkown password'});
+
 		}
+
+		// Check if account is verified
+		if (!user.active) {
+			return done(null, false, {message: 'You need to verify your email account'});
+		}
+
+		return done(null, user);
 	} catch(error) {
 		return done(error, false);
 	}
